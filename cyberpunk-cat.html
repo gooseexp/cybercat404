@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>赛博朋克小猫游戏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a0a2e 50%, #0a0a1a 100%);
+            font-family: 'Courier New', monospace;
+        }
+        #gameContainer {
+            position: relative;
+            border: 3px solid #00ffff;
+            box-shadow: 0 0 20px #00ffff, inset 0 0 20px rgba(0, 255, 255, 0.1);
+            background: #0a0a1a;
+        }
+        canvas {
+            display: block;
+        }
+        #score {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 22px;
+            font-family: 'Courier New', monospace;
+            color: #ff00ff;
+            text-shadow: 0 0 10px #ff00ff, 0 0 20px #ff00ff;
+            letter-spacing: 2px;
+        }
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            display: none;
+            z-index: 100;
+        }
+        #gameOver h2 {
+            font-size: 36px;
+            color: #ff00ff;
+            text-shadow: 0 0 20px #ff00ff, 0 0 40px #ff00ff;
+            margin-bottom: 20px;
+            letter-spacing: 3px;
+        }
+        #gameOver button {
+            padding: 12px 40px;
+            font-size: 18px;
+            font-family: 'Courier New', monospace;
+            background: transparent;
+            color: #00ffff;
+            border: 2px solid #00ffff;
+            cursor: pointer;
+            text-shadow: 0 0 10px #00ffff;
+            box-shadow: 0 0 15px #00ffff, inset 0 0 15px rgba(0, 255, 255, 0.1);
+            transition: all 0.3s;
+            letter-spacing: 2px;
+        }
+        #gameOver button:hover {
+            background: #00ffff;
+            color: #0a0a1a;
+            box-shadow: 0 0 30px #00ffff;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 14px;
+            color: #00ffff;
+            text-shadow: 0 0 5px #00ffff;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="200"></canvas>
+        <div id="score">HI 00000 00000</div>
+        <div id="gameOver">
+            <h2>系统崩溃</h2>
+            <button onclick="restart()">重新连接</button>
+        </div>
+        <div id="instructions">[空格/↑] 跳跃 | 躲避数据障碍</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        let score = 0;
+        let highScore = 0;
+        let gameOver = false;
+        let gameRunning = false;
+        
+        const cat = {
+            x: 50,
+            y: 113,
+            width: 44,
+            height: 47,
+            vy: 0,
+            gravity: 0.6,
+            jumpForce: -12,
+            grounded: true,
+            animFrame: 0,
+            animTimer: 0
+        };
+        
+        const ground = {
+            x: 0,
+            y: 160,
+            width: 2400,
+            height: 40
+        };
+        
+        let obstacles = [];
+        let buildings = [];
+        
+        class Building {
+            constructor(x, height) {
+                this.x = x;
+                this.height = height;
+                this.width = 40 + Math.random() * 60;
+                this.lights = [];
+                for (let i = 0; i < Math.floor(this.height / 20); i++) {
+                    for (let j = 0; j < Math.floor(this.width / 15); j++) {
+                        this.lights.push({
+                            x: j * 15 + 5,
+                            y: i * 20 + 10,
+                            on: Math.random() > 0.5,
+                            flicker: Math.random()
+                        });
+                    }
+                }
+            }
+            
+            update() {
+                this.x -= gameSpeed * 0.3;
+            }
+            
+            draw() {
+                ctx.fillStyle = '#1a1a3a';
+                ctx.fillRect(this.x, ground.y - this.height, this.width, this.height);
+                
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(this.x, ground.y - this.height, this.width, this.height);
+                
+                for (let light of this.lights) {
+                    if (light.on && Math.sin(score * 0.1 + light.flicker * 10) > -0.3) {
+                        ctx.fillStyle = '#ff00ff';
+                        ctx.shadowColor = '#ff00ff';
+                        ctx.shadowBlur = 10;
+                        ctx.fillRect(this.x + light.x, ground.y - this.height + light.y, 8, 10);
+                        ctx.shadowBlur = 0;
+                    }
+                }
+            }
+        }
+        
+        class Cactus {
+            constructor(x, type) {
+                this.x = x;
+                this.y = 114;
+                this.type = type;
+                this.passed = false;
+                
+                if (type === 0) {
+                    this.width = 23;
+                    this.height = 46;
+                } else if (type === 1) {
+                    this.width = 35;
+                    this.height = 46;
+                } else {
+                    this.width = 48;
+                    this.height = 46;
+                }
+            }
+            
+            update() {
+                this.x -= gameSpeed;
+            }
+            
+            draw() {
+                ctx.shadowColor = '#00ffff';
+                ctx.shadowBlur = 15;
+                ctx.fillStyle = '#00ffff';
+                
+                if (this.type === 0) {
+                    this.drawSmallObstacle();
+                } else if (this.type === 1) {
+                    this.drawMediumObstacle();
+                } else {
+                    this.drawLargeObstacle();
+                }
+                ctx.shadowBlur = 0;
+            }
+            
+            drawSmallObstacle() {
+                ctx.fillRect(this.x + 9, this.y, 5, 46);
+                ctx.fillRect(this.x, this.y + 15, 9, 5);
+                ctx.fillRect(this.x + 4, this.y + 10, 5, 10);
+                ctx.fillRect(this.x + 14, this.y + 20, 9, 5);
+                ctx.fillRect(this.x + 14, this.y + 15, 5, 10);
+            }
+            
+            drawMediumObstacle() {
+                ctx.fillRect(this.x + 15, this.y, 5, 46);
+                ctx.fillRect(this.x, this.y + 15, 15, 5);
+                ctx.fillRect(this.x + 10, this.y + 10, 5, 10);
+                ctx.fillRect(this.x + 20, this.y + 20, 15, 5);
+                ctx.fillRect(this.x + 20, this.y + 15, 5, 10);
+            }
+            
+            drawLargeObstacle() {
+                ctx.fillRect(this.x + 21, this.y, 6, 46);
+                ctx.fillRect(this.x, this.y + 10, 21, 6);
+                ctx.fillRect(this.x + 15, this.y + 5, 6, 11);
+                ctx.fillRect(this.x + 27, this.y + 15, 21, 6);
+                ctx.fillRect(this.x + 27, this.y + 10, 6, 11);
+            }
+        }
+        
+        let gameSpeed = 4;
+        let spawnTimer = 0;
+        let spawnInterval = 100;
+        
+        function init() {
+            obstacles = [];
+            buildings = [];
+            score = 0;
+            gameSpeed = 4;
+            spawnTimer = 0;
+            spawnInterval = 100;
+            cat.y = 113;
+            cat.vy = 0;
+            cat.grounded = true;
+            gameOver = false;
+            gameRunning = true;
+            
+            for (let i = 0; i < 5; i++) {
+                buildings.push(new Building(i * 180, 60 + Math.random() * 80));
+            }
+            
+            document.getElementById('gameOver').style.display = 'none';
+        }
+        
+        function jump() {
+            if (cat.grounded && !gameOver) {
+                cat.vy = cat.jumpForce;
+                cat.grounded = false;
+            }
+        }
+        
+        function update() {
+            if (!gameRunning) return;
+            
+            if (gameOver) return;
+            
+            score++;
+            if (score > highScore) {
+                highScore = score;
+            }
+            
+            if (score % 500 === 0) {
+                gameSpeed += 0.5;
+                spawnInterval = Math.max(50, spawnInterval - 5);
+            }
+            
+            cat.vy += cat.gravity;
+            cat.y += cat.vy;
+            
+            if (cat.y >= 113) {
+                cat.y = 113;
+                cat.vy = 0;
+                cat.grounded = true;
+            }
+            
+            cat.animTimer++;
+            if (cat.animTimer > 6) {
+                cat.animTimer = 0;
+                cat.animFrame = (cat.animFrame + 1) % 2;
+            }
+            
+            spawnTimer++;
+            if (spawnTimer > spawnInterval) {
+                spawnTimer = 0;
+                const type = Math.floor(Math.random() * 3);
+                obstacles.push(new Cactus(canvas.width, type));
+                spawnInterval = 60 + Math.random() * 60;
+            }
+            
+            obstacles = obstacles.filter(obs => {
+                obs.update();
+                return obs.x + obs.width > -50;
+            });
+            
+            buildings = buildings.filter(building => {
+                building.update();
+                if (building.x + building.width < 0) {
+                    buildings.push(new Building(canvas.width, 60 + Math.random() * 80));
+                    return false;
+                }
+                return true;
+            });
+            
+            for (let obs of obstacles) {
+                if (checkCollision(cat, obs)) {
+                    gameOver = true;
+                    gameRunning = false;
+                    document.getElementById('gameOver').style.display = 'block';
+                    break;
+                }
+            }
+            
+            updateUI();
+        }
+        
+        function checkCollision(cat, obs) {
+            const catBox = {
+                x: cat.x + 10,
+                y: cat.y + 10,
+                width: cat.width - 20,
+                height: cat.height - 10
+            };
+            
+            return catBox.x < obs.x + obs.width &&
+                   catBox.x + catBox.width > obs.x &&
+                   catBox.y < obs.y + obs.height &&
+                   catBox.y + catBox.height > obs.y;
+        }
+        
+        function drawCat() {
+            const neonPurple = '#ff00ff';
+            const neonCyan = '#00ffff';
+            const white = '#ffffff';
+            const black = '#000000';
+            
+            ctx.shadowColor = neonPurple;
+            ctx.shadowBlur = 20;
+            ctx.fillStyle = neonPurple;
+            
+            if (cat.grounded) {
+                if (cat.animFrame === 0) {
+                    ctx.fillRect(cat.x + 10, cat.y + 15, 30, 25);
+                    ctx.fillRect(cat.x + 35, cat.y + 10, 20, 20);
+                    ctx.beginPath();
+                    ctx.moveTo(cat.x + 38, cat.y + 10);
+                    ctx.lineTo(cat.x + 35, cat.y);
+                    ctx.lineTo(cat.x + 45, cat.y + 8);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(cat.x + 52, cat.y + 10);
+                    ctx.lineTo(cat.x + 55, cat.y);
+                    ctx.lineTo(cat.x + 48, cat.y + 8);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.shadowBlur = 10;
+                    ctx.fillStyle = neonCyan;
+                    ctx.beginPath();
+                    ctx.moveTo(cat.x + 38, cat.y + 9);
+                    ctx.lineTo(cat.x + 37, cat.y + 3);
+                    ctx.lineTo(cat.x + 43, cat.y + 8);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(cat.x + 52, cat.y + 9);
+                    ctx.lineTo(cat.x + 53, cat.y + 3);
+                    ctx.lineTo(cat.x + 47, cat.y + 8);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.shadowBlur = 15;
+                    ctx.fillStyle = white;
+                    ctx.fillRect(cat.x + 38, cat.y + 20, 14, 8);
+                    ctx.fillStyle = neonCyan;
+                    ctx.shadowColor = neonCyan;
+                    ctx.fillRect(cat.x + 40, cat.y + 16, 4, 5);
+                    ctx.fillRect(cat.x + 48, cat.y + 16, 4, 5);
+                    ctx.fillStyle = neonPurple;
+                    ctx.shadowColor = neonPurple;
+                    ctx.fillRect(cat.x + 44, cat.y + 23, 3, 2);
+                    ctx.fillStyle = neonPurple;
+                    ctx.fillRect(cat.x + 12, cat.y + 40, 8, 7);
+                    ctx.fillRect(cat.x + 30, cat.y + 40, 8, 7);
+                    ctx.fillRect(cat.x, cat.y + 18, 12, 15);
+                } else {
+                    ctx.fillRect(cat.x + 10, cat.y + 15, 30, 25);
+                    ctx.fillRect(cat.x + 35, cat.y + 10, 20, 20);
+                    ctx.beginPath();
+                    ctx.moveTo(cat.x + 38, cat.y + 10);
+                    ctx.lineTo(cat.x + 35, cat.y);
+                    ctx.lineTo(cat.x + 45, cat.y + 8);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(cat.x + 52, cat.y + 10);
+                    ctx.lineTo(cat.x + 55, cat.y);
+                    ctx.lineTo(cat.x + 48, cat.y + 8);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.shadowBlur = 10;
+                    ctx.fillStyle = neonCyan;
+                    ctx.beginPath();
+                    ctx.moveTo(cat.x + 38, cat.y + 9);
+                    ctx.lineTo(cat.x + 37, cat.y + 3);
+                    ctx.lineTo(cat.x + 43, cat.y + 8);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(cat.x + 52, cat.y + 9);
+                    ctx.lineTo(cat.x + 53, cat.y + 3);
+                    ctx.lineTo(cat.x + 47, cat.y + 8);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.shadowBlur = 15;
+                    ctx.fillStyle = white;
+                    ctx.fillRect(cat.x + 38, cat.y + 20, 14, 8);
+                    ctx.fillStyle = neonCyan;
+                    ctx.shadowColor = neonCyan;
+                    ctx.fillRect(cat.x + 40, cat.y + 16, 4, 5);
+                    ctx.fillRect(cat.x + 48, cat.y + 16, 4, 5);
+                    ctx.fillStyle = neonPurple;
+                    ctx.shadowColor = neonPurple;
+                    ctx.fillRect(cat.x + 44, cat.y + 23, 3, 2);
+                    ctx.fillStyle = neonPurple;
+                    ctx.fillRect(cat.x + 8, cat.y + 40, 8, 7);
+                    ctx.fillRect(cat.x + 34, cat.y + 40, 8, 7);
+                    ctx.fillRect(cat.x, cat.y + 18, 12, 15);
+                }
+            } else {
+                ctx.fillRect(cat.x + 10, cat.y + 15, 30, 25);
+                ctx.fillRect(cat.x + 35, cat.y + 10, 20, 20);
+                ctx.beginPath();
+                ctx.moveTo(cat.x + 38, cat.y + 10);
+                ctx.lineTo(cat.x + 35, cat.y);
+                ctx.lineTo(cat.x + 45, cat.y + 8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(cat.x + 52, cat.y + 10);
+                ctx.lineTo(cat.x + 55, cat.y);
+                ctx.lineTo(cat.x + 48, cat.y + 8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 10;
+                ctx.fillStyle = neonCyan;
+                ctx.beginPath();
+                ctx.moveTo(cat.x + 38, cat.y + 9);
+                ctx.lineTo(cat.x + 37, cat.y + 3);
+                ctx.lineTo(cat.x + 43, cat.y + 8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(cat.x + 52, cat.y + 9);
+                ctx.lineTo(cat.x + 53, cat.y + 3);
+                ctx.lineTo(cat.x + 47, cat.y + 8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 15;
+                ctx.fillStyle = white;
+                ctx.fillRect(cat.x + 38, cat.y + 20, 14, 8);
+                ctx.fillStyle = neonCyan;
+                ctx.shadowColor = neonCyan;
+                ctx.fillRect(cat.x + 40, cat.y + 16, 4, 5);
+                ctx.fillRect(cat.x + 48, cat.y + 16, 4, 5);
+                ctx.fillStyle = neonPurple;
+                ctx.shadowColor = neonPurple;
+                ctx.fillRect(cat.x + 44, cat.y + 23, 3, 2);
+                ctx.fillStyle = neonPurple;
+                ctx.fillRect(cat.x + 8, cat.y + 40, 8, 7);
+                ctx.fillRect(cat.x + 34, cat.y + 40, 8, 7);
+                ctx.fillRect(cat.x, cat.y + 18, 12, 15);
+            }
+            ctx.shadowBlur = 0;
+        }
+        
+        function drawGround() {
+            ctx.shadowColor = '#ff00ff';
+            ctx.shadowBlur = 10;
+            ctx.strokeStyle = '#ff00ff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, ground.y);
+            ctx.lineTo(canvas.width, ground.y);
+            ctx.stroke();
+            
+            const offset = Math.floor(score * gameSpeed) % 20;
+            ctx.strokeStyle = '#00ffff';
+            ctx.shadowColor = '#00ffff';
+            ctx.lineWidth = 1;
+            for (let x = -offset; x < canvas.width + 20; x += 20) {
+                ctx.beginPath();
+                ctx.moveTo(x, ground.y + 5);
+                ctx.lineTo(x + 10, ground.y + 10);
+                ctx.lineTo(x + 20, ground.y + 5);
+                ctx.stroke();
+            }
+            ctx.shadowBlur = 0;
+        }
+        
+        function draw() {
+            ctx.fillStyle = '#0a0a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.1)';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            for (let building of buildings) {
+                building.draw();
+            }
+            
+            drawGround();
+            
+            for (let obs of obstacles) {
+                obs.draw();
+            }
+            
+            drawCat();
+        }
+        
+        function updateUI() {
+            const scoreStr = Math.floor(score / 10).toString().padStart(5, '0');
+            const highScoreStr = Math.floor(highScore / 10).toString().padStart(5, '0');
+            document.getElementById('score').textContent = `HI ${highScoreStr} ${scoreStr}`;
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function restart() {
+            init();
+            gameRunning = true;
+        }
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                e.preventDefault();
+                if (!gameRunning && !gameOver) {
+                    init();
+                }
+                jump();
+            }
+        });
+        
+        canvas.addEventListener('click', () => {
+            if (!gameRunning && !gameOver) {
+                init();
+            }
+            jump();
+        });
+        
+        gameLoop();
+    </script>
+</body>
+</html>
